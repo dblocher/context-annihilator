@@ -8,7 +8,6 @@ export type ClassificationInput = {
   kind: ContextKind
   source?: string
   content: string
-  laterDuplicateOrdinal?: number
 }
 
 export type ClassificationOutput = {

@@ -19,8 +19,6 @@ export type ChunkTaskMessage = {
   contentKey: string
   contentHash: string
   summary: string
-  /** Ordinal of a later chunk with identical content, if one exists. */
-  laterDuplicateOrdinal?: number
   publishedAt: string
   deadlineAt: string
 }

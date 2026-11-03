@@ -1,7 +1,7 @@
 import type { StartJobRequest } from '../../contracts/context.js'
 import type { ChunkTaskMessage } from '../../contracts/messages.js'
-import { laterDuplicateOrdinals } from '../aggregation/duplicates.js'
-import { describeError, failedDecision } from '../decisions/policy.js'
+import { earlierDuplicates } from '../aggregation/duplicates.js'
+import { describeError, duplicateDecision, failedDecision } from '../decisions/policy.js'
 import { renderSummaryTranscript, type TaskSummarizer } from '../summarization/summarizer.js'
 import { mapWithConcurrency } from '../util/concurrency.js'
 import { contentHash } from '../util/hash.js'
@@ -26,12 +26,14 @@ export type CoordinatorDeps = {
 export type CoordinatorOutcome =
   | { status: 'skipped'; reason: string }
   | { status: 'failed'; failure: string }
-  | { status: 'dispatched'; eligible: number; published: number; publishFailures: number; summaryMs: number; dispatchMs: number }
+  | { status: 'dispatched'; eligible: number; duplicates: number; published: number; publishFailures: number; summaryMs: number; dispatchMs: number }
 
 /**
- * Summarizes the task, stores eligible chunk content, records the decision deadline, and
- * publishes one SNS message per eligible chunk. Chunks whose publish fails get a `failed`
- * result immediately, so the job does not wait for the deadline on their account.
+ * Summarizes the task, records the decision deadline, writes a `duplicate` result for each
+ * eligible chunk that has an identical later eligible copy, then stores the content of the
+ * remaining eligible chunks and publishes one SNS message per chunk. Chunks whose publish
+ * fails get a `failed` result immediately, so the job does not wait for the deadline on
+ * their account.
  */
 export async function runCoordinator(deps: CoordinatorDeps, jobId: string): Promise<CoordinatorOutcome> {
   const { store, payloads, settings } = deps
@@ -55,7 +57,9 @@ export async function runCoordinator(deps: CoordinatorDeps, jobId: string): Prom
     const summaryMs = Date.now() - summaryStarted
 
     const eligible = request.chunks.filter((chunk) => !chunk.protected)
-    await mapWithConcurrency(eligible, settings.storeConcurrency, (chunk) =>
+    const duplicates = earlierDuplicates(request.chunks)
+    const toClassify = eligible.filter((chunk) => !duplicates.has(chunk.ordinal))
+    await mapWithConcurrency(toClassify, settings.storeConcurrency, (chunk) =>
       payloads.putText(payloadKeys.chunk(jobId, chunk.ordinal), chunk.content),
     )
 
@@ -76,25 +80,33 @@ export async function runCoordinator(deps: CoordinatorDeps, jobId: string): Prom
     )
     if (dispatched === 'skipped') return { status: 'skipped', reason: 'job left the summarizing state' }
 
-    const duplicates = laterDuplicateOrdinals(request.chunks)
-    const publishedAt = deps.now().toISOString()
-    const messages: ChunkTaskMessage[] = eligible.map((chunk) => {
-      const later = duplicates.get(chunk.ordinal)
-      return {
-        v: 1,
+    // Earlier exact copies are resolved here, so only the last copy reaches the model.
+    const duplicateChunks = eligible.filter((chunk) => duplicates.has(chunk.ordinal))
+    await mapWithConcurrency(duplicateChunks, settings.storeConcurrency, async (chunk) => {
+      const now = deps.now().toISOString()
+      await store.putChunkResult({
+        ...duplicateDecision(chunk.id, contentHash(chunk.content), duplicates.get(chunk.ordinal) as number),
         jobId,
-        chunkId: chunk.id,
         ordinal: chunk.ordinal,
-        kind: chunk.kind,
-        ...(chunk.source !== undefined && { source: chunk.source }),
-        contentKey: payloadKeys.chunk(jobId, chunk.ordinal),
-        contentHash: contentHash(chunk.content),
-        summary: summary.summary,
-        ...(later !== undefined && { laterDuplicateOrdinal: later }),
-        publishedAt,
-        deadlineAt,
-      }
+        workerStartedAt: now,
+        writtenAt: now,
+      })
     })
+
+    const publishedAt = deps.now().toISOString()
+    const messages: ChunkTaskMessage[] = toClassify.map((chunk) => ({
+      v: 1,
+      jobId,
+      chunkId: chunk.id,
+      ordinal: chunk.ordinal,
+      kind: chunk.kind,
+      ...(chunk.source !== undefined && { source: chunk.source }),
+      contentKey: payloadKeys.chunk(jobId, chunk.ordinal),
+      contentHash: contentHash(chunk.content),
+      summary: summary.summary,
+      publishedAt,
+      deadlineAt,
+    }))
 
     const publishStarted = Date.now()
     const { failures } = await deps.publisher.publish(messages)
@@ -118,6 +130,7 @@ export async function runCoordinator(deps: CoordinatorDeps, jobId: string): Prom
     return {
       status: 'dispatched',
       eligible: eligible.length,
+      duplicates: duplicateChunks.length,
       published: messages.length - failures.length,
       publishFailures: failures.length,
       summaryMs,

@@ -52,7 +52,6 @@ export function parseChunkTaskMessage(body: string): ChunkTaskMessage | undefine
     m.contentKey === payloadKeys.chunk(m.jobId, m.ordinal) &&
     typeof m.contentHash === 'string' &&
     typeof m.summary === 'string' &&
-    (m.laterDuplicateOrdinal === undefined || Number.isSafeInteger(m.laterDuplicateOrdinal)) &&
     typeof m.publishedAt === 'string' &&
     typeof m.deadlineAt === 'string' &&
     !Number.isNaN(Date.parse(m.publishedAt)) &&
@@ -112,6 +111,5 @@ async function decide(deps: WorkerDeps, message: ChunkTaskMessage): Promise<{ de
     kind: message.kind,
     ...(message.source !== undefined && { source: message.source }),
     content,
-    ...(message.laterDuplicateOrdinal !== undefined && { laterDuplicateOrdinal: message.laterDuplicateOrdinal }),
   })
 }

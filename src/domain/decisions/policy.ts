@@ -13,8 +13,13 @@ const REASON_TEXT: Record<ReasonCode, string> = {
   duplicate: 'repeats content that appears later',
 }
 
-/** The only path to a drop: a model verdict of `irrelevant` on hash-verified content. */
+/**
+ * The two paths to a drop (ADR 0002): a model verdict of `irrelevant` on hash-verified
+ * content, or a `duplicate` outcome, where the coordinator found an identical later eligible
+ * copy that is classified in its place.
+ */
 export function shouldKeep(outcome: ChunkDecision['outcome'], decision: DecisionLabel): boolean {
+  if (outcome === 'duplicate') return false
   return !(outcome === 'decided' && decision === 'irrelevant')
 }
 
@@ -58,6 +63,20 @@ export function protectedDecision(chunkId: string, contentHash: string): ChunkDe
     keep: true,
     reason: 'protected: never classified',
     outcome: 'protected',
+    latencyMs: 0,
+    contentHash,
+  }
+}
+
+/** An earlier exact copy of a later eligible chunk. Dropped without a model call. */
+export function duplicateDecision(chunkId: string, contentHash: string, lastCopyOrdinal: number): ChunkDecision {
+  return {
+    chunkId,
+    decision: 'irrelevant',
+    keep: shouldKeep('duplicate', 'irrelevant'),
+    reason: `duplicate: identical content appears later at #${lastCopyOrdinal}`,
+    reasonCode: 'duplicate',
+    outcome: 'duplicate',
     latencyMs: 0,
     contentHash,
   }

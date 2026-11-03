@@ -12,7 +12,11 @@ export const CONTEXT_KINDS = [
 
 export type ContextKind = (typeof CONTEXT_KINDS)[number]
 
-/** Kinds that carry instructions with authority over the task. They are never classified. */
+/**
+ * Kinds that carry instructions with authority over the task. They are never classified, and
+ * validation rejects them with `protected: false`. `user` chunks are not listed: hosts may send
+ * them unprotected, and `startJob` marks them protected after validation (ADR 0002).
+ */
 export const AUTHORITATIVE_KINDS: ReadonlySet<ContextKind> = new Set<ContextKind>([
   'system',
   'developer',

@@ -102,17 +102,20 @@ class MemoryPayloads {
 const labels: Record<string, { label: string }> = fixture.labels
 const contentById = new Map<string, string>(base.chunks.map((c: any) => [c.id, c.content]))
 const askedQuestions: any[] = []
+const askedIds: Array<string | undefined> = []
 class FakeDecisionModel extends DecisionModel {
   protected async _ask(state: any, questions: any): Promise<any> {
     askedQuestions.push(questions)
     const text = String(state)
     let id = [...contentById.entries()].find(([, content]) => text.includes(content))?.[0]
-    // c07 and c10 have identical content; only the earlier copy carries the duplicate hint.
-    if (id === 'c07-test-failure-first' && !text.includes('identical copy')) id = 'c10-test-failure-latest'
+    // c07 and c10 have identical content. The coordinator drops c07 without a model call, so
+    // any record with this content is c10.
+    if (id === 'c07-test-failure-first') id = 'c10-test-failure-latest'
+    askedIds.push(id)
     if (id === 'c03-read-date-ts') throw new Error('ThrottlingException: simulated')
     if (id === 'c11-assistant-next') return { answers: { relevance: new Uncertain('not enough information'), reasonCode: new Uncertain() }, metadata: { latencyMs: 7 } }
     const label = id ? labels[id]?.label ?? 'supporting' : 'supporting'
-    const reason = label === 'irrelevant' ? (id === 'c07-test-failure-first' ? 'duplicate' : 'unrelated') : label === 'required' ? 'direct-dependency' : 'continuity'
+    const reason = label === 'irrelevant' ? 'unrelated' : label === 'required' ? 'direct-dependency' : 'continuity'
     return { answers: { relevance: label, reasonCode: reason }, usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 }, metadata: { latencyMs: 12 } }
   }
 }
@@ -148,9 +151,15 @@ const started = await startJob(startDeps, base)
 assert.equal(started.ok, true)
 const jobId = started.value.jobId
 check('ingress counts eligible and protected chunks', () => {
-  assert.equal(started.value.eligibleCount, 11)
-  assert.equal(started.value.protectedCount, 1)
+  assert.equal(started.value.eligibleCount, 10)
+  assert.equal(started.value.protectedCount, 2)
   assert.equal(started.value.duplicate, false)
+})
+check('ingress protects user messages sent unprotected', () => {
+  assert.equal(base.chunks[1].kind, 'user')
+  assert.equal(base.chunks[1].protected, false)
+  const stored = JSON.parse([...payloads.objects.values()][0])
+  assert.equal(stored.chunks[1].protected, true)
 })
 const again = await startJob(startDeps, base)
 check('resubmitting the same request is idempotent', () => assert.ok(again.ok && again.value.jobId === jobId && again.value.duplicate))
@@ -172,18 +181,24 @@ check('coordinator dispatched with one publish failure', () => {
 const second = await runCoordinator(coordinatorDeps, jobId)
 check('duplicate coordinator invocation is skipped', () => assert.equal(second.status, 'skipped'))
 check('every published message parses and carries no chunk content', () => {
-  assert.equal(published.length, 11)
+  assert.equal(published.length, 9)
   for (const m of published) {
     assert.ok(m, 'message failed to parse')
     assert.ok(!JSON.stringify(m).includes(contentById.get(m.chunkId)!), `message for ${m.chunkId} contains content`)
   }
 })
-check('earlier duplicate gets a later-duplicate hint', () => {
-  assert.equal(published.find((m) => m.chunkId === 'c07-test-failure-first').laterDuplicateOrdinal, 10)
-  assert.equal(published.find((m) => m.chunkId === 'c10-test-failure-latest').laterDuplicateOrdinal, undefined)
+check('protected user message and earlier duplicate are not published', () => {
+  const ids = published.map((m) => m.chunkId)
+  assert.ok(!ids.includes('c01-user-request') && !ids.includes('c07-test-failure-first'))
+  assert.ok(ids.includes('c10-test-failure-latest'))
+  assert.equal(outcome.duplicates, 1)
+})
+check('duplicate content reaches the model once', () => {
+  assert.equal(askedIds.filter((id) => id === 'c10-test-failure-latest').length, 1)
+  assert.ok(!askedIds.includes('c01-user-request'))
 })
 check('Strands ask accepted the question map', () => {
-  assert.ok(askedQuestions.length >= 9)
+  assert.ok(askedQuestions.length >= 7)
   assert.deepEqual(Object.keys(askedQuestions[0]), ['relevance', 'reasonCode'])
 })
 
@@ -207,12 +222,23 @@ check('job completes after the deadline and freezes the result', () => {
   assert.equal(final.frozeNow, true)
 })
 check('manifest is in original order and complete', () => assert.deepEqual(result.manifest.map((m: any) => m.ordinal), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]))
-check('protected chunk is kept', () => assert.equal((byId.get('c00-steering') as any).outcome, 'protected'))
+check('protected chunks are kept', () => {
+  for (const id of ['c00-steering', 'c01-user-request']) {
+    const entry = byId.get(id) as any
+    assert.deepEqual([entry.outcome, entry.protected, entry.keep], ['protected', true, true])
+  }
+})
+check('earlier duplicate is dropped without a model call', () => {
+  const entry = byId.get('c07-test-failure-first') as any
+  assert.deepEqual([entry.outcome, entry.decision, entry.keep, entry.reasonCode], ['duplicate', 'irrelevant', false, 'duplicate'])
+  assert.ok(entry.reason.includes('#10'))
+  assert.equal(entry.modelId, undefined)
+})
 check('classifier failure is kept', () => assert.deepEqual([(byId.get('c03-read-date-ts') as any).outcome, (byId.get('c03-read-date-ts') as any).keep], ['failed', true]))
 check('publish failure is kept', () => assert.deepEqual([(byId.get('c06-revised-plan') as any).outcome, (byId.get('c06-revised-plan') as any).keep], ['failed', true]))
 check('lost message is timed out and kept', () => assert.deepEqual([(byId.get('c09-read-test') as any).outcome, (byId.get('c09-read-test') as any).keep], ['timed-out', true]))
 check('uncertain answer is kept', () => assert.deepEqual([(byId.get('c11-assistant-next') as any).decision, (byId.get('c11-assistant-next') as any).keep], ['uncertain', true]))
-check('only decided irrelevant chunks are dropped', () => {
+check('only decided irrelevant chunks and earlier duplicates are dropped', () => {
   const dropped = result.manifest.filter((m: any) => !m.keep).map((m: any) => m.chunkId).sort()
   assert.deepEqual(dropped, ['c02-plan-temporal', 'c04-read-format-ts', 'c05-stale-error', 'c07-test-failure-first', 'c08-injection'])
 })
@@ -221,7 +247,10 @@ check('retained content is in order and matches the manifest', () => {
 })
 check('metrics count outcomes', () => {
   const c = result.metrics.chunks
-  assert.deepEqual([c.total, c.protected, c.eligible, c.dropped, c.retained, c.failed, c.timedOut, c.uncertain], [12, 1, 11, 5, 7, 2, 1, 1])
+  assert.deepEqual(
+    [c.total, c.protected, c.eligible, c.dropped, c.retained, c.failed, c.timedOut, c.uncertain, c.duplicate],
+    [12, 2, 10, 5, 7, 2, 1, 1, 1],
+  )
   assert.ok(result.metrics.tokens.eligibleReduction > 0 && result.metrics.tokens.eligibleReduction < 1)
   assert.equal(result.metrics.usage.summaryInputTokens, 900)
 })

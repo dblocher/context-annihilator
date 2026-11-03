@@ -31,6 +31,7 @@ export const handler = async (event: unknown): Promise<ApiResponse<JobResult>> =
         failure: result.failure,
         eligible: metrics.chunks.eligible,
         dropped: metrics.chunks.dropped,
+        duplicate: metrics.chunks.duplicate,
         failed: metrics.chunks.failed,
         timedOut: metrics.chunks.timedOut,
         eligibleReduction: metrics.tokens.eligibleReduction,

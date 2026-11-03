@@ -35,7 +35,11 @@ export function buildSummaryPrompt(input: SummaryInput, maxWords: number): strin
     `Write a task summary of at most ${maxWords} words, in plain text, with these headings: ` +
       'Goal; Constraints and decisions; Current state; Open problems; Next action. ' +
       'Quote file paths, commands, identifiers, and error messages exactly where they matter. ' +
-      'Mark plans or errors that were later superseded or fixed as such. Do not invent details.',
+      'Mark plans or errors that were later superseded or fixed as such. ' +
+      'Under Open problems, list only errors, failures, and questions that appear in the transcript and are still unresolved; ' +
+      'do not add new risks, checks, or verification steps, and write "None" if there are none. ' +
+      "Under Next action, follow the user's next instruction and the plan already stated in the transcript, without adding steps. " +
+      'Do not invent details.',
   ].join('\n')
 }
 

@@ -139,6 +139,7 @@ function computeMetrics(
       protected: manifest.length - eligible.length,
       eligible: eligible.length,
       decided: eligible.filter((m) => m.outcome === 'decided').length,
+      duplicate: eligible.filter((m) => m.outcome === 'duplicate').length,
       uncertain: eligible.filter((m) => m.outcome === 'decided' && m.decision === 'uncertain').length,
       failed: eligible.filter((m) => m.outcome === 'failed').length,
       timedOut: eligible.filter((m) => m.outcome === 'timed-out').length,

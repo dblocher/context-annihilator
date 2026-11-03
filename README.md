@@ -1,7 +1,7 @@
 # Context Annihilator
 
 A personal experiment. A Claude Code `/annihilate` command sends the current session's live
-context to a small AWS service. The service summarizes the task, asks a model whether each
+context to a small AWS service. The service summarizes the task, asks a decision model whether each
 context record is still relevant, and returns the records to keep in their original order.
 The hook then starts a fresh background Claude Code session seeded with that reduced
 context, and the old session gets no model turn.
@@ -15,10 +15,10 @@ See `HANDOFF.md` for the current state and next steps.
 
 1. The hook reads the session transcript, splits it into ordered chunks, and calls the
    `ingress` Lambda function with an IAM-signed invoke. There is no public endpoint.
-2. `ingress` validates the request, stores it in S3, records the job in DynamoDB, and starts
+2. `ingress` validates the request, marks every user message protected, stores it in S3, records the job in DynamoDB, and starts
    the `coordinator` asynchronously.
-3. The `coordinator` summarizes the task with Bedrock and publishes one SNS message per
-   eligible chunk.
+3. The `coordinator` summarizes the task with Bedrock, drops earlier exact copies of
+   repeated eligible chunks, and publishes one SNS message per remaining eligible chunk.
 4. One `decision-worker` invocation per chunk classifies it with the Strands
    `LLMDecisionModel` and writes one idempotent result.
 5. The client polls the `result` function. The first poll that sees a finished job freezes
@@ -27,9 +27,12 @@ See `HANDOFF.md` for the current state and next steps.
 Safety rules:
 
 - Fail open. Protected, uncertain, failed, and timed-out chunks are always kept. A chunk is
-  dropped only when the model decided it is irrelevant.
-- System, developer, tool-schema, and steering content and the current user instruction are
-  never classified or dropped.
+  dropped only when the model decided it is irrelevant, or when it is an exact copy of a
+  later eligible chunk. In that case only the last copy is classified, so the content
+  survives unless the model drops that copy too.
+- System, developer, tool-schema, and steering content, every user message, and the
+  current user instruction are never classified or dropped. This includes large content
+  the user pasted, such as logs or stack traces.
 - Evaluated context is treated as untrusted data. Logs carry scalar fields only, never chunk
   content.
 

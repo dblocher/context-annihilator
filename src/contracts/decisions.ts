@@ -20,8 +20,11 @@ export const REASON_CODES = [
 ] as const
 export type ReasonCode = (typeof REASON_CODES)[number]
 
-/** Why a chunk has the decision it has. Only `decided` chunks can be dropped. */
-export type DecisionOutcome = 'decided' | 'protected' | 'failed' | 'timed-out'
+/**
+ * Why a chunk has the decision it has. Only `decided` chunks (model verdict `irrelevant`) and
+ * `duplicate` chunks (an earlier exact copy of a later eligible chunk) can be dropped.
+ */
+export type DecisionOutcome = 'decided' | 'duplicate' | 'protected' | 'failed' | 'timed-out'
 
 export type ChunkDecision = {
   chunkId: string

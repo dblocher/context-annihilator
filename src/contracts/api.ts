@@ -71,6 +71,8 @@ export type JobMetrics = {
     protected: number
     eligible: number
     decided: number
+    /** Earlier exact copies of a later eligible chunk, dropped without a model call. */
+    duplicate: number
     uncertain: number
     failed: number
     timedOut: number

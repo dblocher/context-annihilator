@@ -109,7 +109,8 @@ function successReason(result: JobResult, launch: { name: string; sessionId?: st
     lines.push(
       `  Retained ${metrics.chunks.retained} of ${metrics.chunks.total} records; ` +
         `eligible context reduced ${(metrics.tokens.eligibleReduction * 100).toFixed(1)}% ` +
-        `(about ${metrics.tokens.eligibleInput.toLocaleString('en-US')} to ${metrics.tokens.eligibleRetained.toLocaleString('en-US')} estimated tokens).`,
+        `(about ${metrics.tokens.eligibleInput.toLocaleString('en-US')} to ${metrics.tokens.eligibleRetained.toLocaleString('en-US')} estimated tokens)` +
+        (metrics.chunks.duplicate > 0 ? `; ${metrics.chunks.duplicate} earlier duplicates dropped.` : '.'),
       `  Kept by policy: ${metrics.chunks.uncertain} uncertain, ${metrics.chunks.failed} failed, ${metrics.chunks.timedOut} timed out.`,
     )
   }

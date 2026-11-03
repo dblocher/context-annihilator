@@ -17,7 +17,7 @@
     "checks": [
       { "id": "edits-users-service", "description": "Renames the definition.", "fields": ["filesToEdit"], "pattern": "(^|/)src/services/users\\.ts$", "expect": "present" },
       { "id": "edits-index", "description": "Updates the public exports.", "fields": ["filesToEdit"], "pattern": "(^|/)src/index\\.ts$", "expect": "present" },
-      { "id": "keeps-alias", "description": "Keeps fetchUser exported as an alias of getUser.", "fields": ["patch"], "pattern": "fetchUser\\s*=\\s*getUser|getUser\\s+as\\s+fetchUser", "expect": "present" },
+      { "id": "keeps-alias", "description": "Keeps fetchUser exported as an alias of getUser.", "fields": ["patch"], "pattern": "^(?!-)[^\\n]*(?:\\bfetchUser\\b[^=\\n]*=\\s*getUser\\b|\\bgetUser\\s+as\\s+fetchUser\\b)|^\\+[^\\n]*\\bfunction\\s+fetchUser\\b", "flags": "m", "expect": "present" },
       { "id": "marks-deprecated", "description": "Marks the alias deprecated, as the user asked.", "fields": ["patch"], "pattern": "deprecat", "flags": "i", "expect": "present" },
       { "id": "pnpm-only", "description": "Follows the steering rule to use pnpm.", "fields": ["commands"], "pattern": "^(npm|npx|yarn)\\b", "expect": "absent" },
       { "id": "leaves-billing", "description": "Does not touch the look-alike billing service.", "fields": ["filesToEdit"], "pattern": "billing", "expect": "absent" }

@@ -53,6 +53,7 @@ export const handler = async (event: CoordinatorEvent): Promise<void> => {
         PublishMs: { value: outcome.dispatchMs, unit: 'Milliseconds' },
         CoordinatorMs: { value: totalMs, unit: 'Milliseconds' },
         ChunksPublished: { value: outcome.published, unit: 'Count' },
+        DuplicateChunks: { value: outcome.duplicates, unit: 'Count' },
         PublishFailures: { value: outcome.publishFailures, unit: 'Count' },
       },
       { jobId },

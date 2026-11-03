@@ -19,6 +19,15 @@ or `probabilities`, and `LLMDecisionModel` ignores `uncertainty.minConfidence`.
 - `ContextKind` is unchanged. `system`, `developer`, `tool-schema`, and `steering` are
   authoritative. A request that sends any of them with `protected: false` is rejected.
 - `currentPrompt` is always protected. It travels outside `chunks` and is never classified.
+- Every `user` chunk is protected (added 2026-11-03). Hosts may still send `user` chunks
+  with `protected: false`; `startJob` sets `protected: true` after validation and before it
+  computes the request hash, so resubmissions stay idempotent and the job counts, the
+  coordinator, and the metrics all see the same protection. `user` is not added to the
+  authoritative kinds, because validation would then reject existing hosts and fixtures
+  that send user chunks unprotected. Reason: in the 2026-11-03 evaluation, Haiku 5.5
+  dropped an earlier user message in `task-switch` that carried a standing schema-freeze
+  rule. Trade-off, accepted by the user: large content the user pastes into a message
+  (logs, stack traces) is never dropped either.
 - Ordinals must be unique non-negative integers, and `chunks` must be sorted by ordinal.
   Gaps are allowed, so a host can omit entries without renumbering.
 - Chunk IDs must be unique, 1 to 200 characters, with no control characters.
@@ -34,8 +43,8 @@ or `probabilities`, and `LLMDecisionModel` ignores `uncertainty.minConfidence`.
 
 `ChunkDecision` gains these fields:
 
-- `outcome`: `decided`, `protected`, `failed`, or `timed-out`. The `decision` label alone
-  cannot say why an `uncertain` chunk was kept.
+- `outcome`: `decided`, `duplicate`, `protected`, `failed`, or `timed-out`. The `decision`
+  label alone cannot say why an `uncertain` chunk was kept.
 - `reasonCode`: the answer to a second closed question asked in the same model call (for
   example `superseded`, `duplicate`, `direct-dependency`). Decision models cannot produce
   free text, so `reason` is a readable sentence built from the code, or the `Uncertain`
@@ -45,14 +54,28 @@ or `probabilities`, and `LLMDecisionModel` ignores `uncertainty.minConfidence`.
 - `modelId` comes from configuration, not from the SDK. `confidence` stays optional and is
   empty for `LLMDecisionModel`.
 
-Keep policy: a chunk is dropped only when `outcome` is `decided`, `decision` is
-`irrelevant`, and the worker verified the content hash. Every other combination is kept.
+Keep policy: a chunk is dropped on one of two paths. Every other combination is kept.
+
+1. Model verdict: `outcome` is `decided`, `decision` is `irrelevant`, and the worker
+   verified the content hash.
+2. Earlier duplicate (added 2026-11-03): `outcome` is `duplicate`.
+
 Confidence thresholds stay off until a provider is measured on the labeled set.
 
-Duplicate content: the coordinator hashes eligible chunks. An earlier chunk whose exact
-content appears again later gets a hint naming the later ordinal, so the model can label
-the earlier copy `irrelevant` with reason `duplicate`. The last copy gets no hint and is
-judged on its own merits. No chunk is dropped deterministically.
+Duplicate content: the coordinator hashes eligible chunks. An eligible chunk whose exact
+content (same SHA-256) appears again later among eligible chunks is not published. The
+coordinator writes its result directly with `outcome: duplicate`, `decision: irrelevant`,
+`keep: false`, `reasonCode: duplicate`, and a reason naming the ordinal of the last copy.
+Only the last copy is classified. If it is kept for any reason, including a failure or a
+timeout, the content survives. If the model drops it, every copy was irrelevant. Protected
+chunks are never deduplicated and do not count as a later copy. Coordinator-written results
+count as resolved, like publish failures, so the job completes without waiting for them.
+Metrics count them in `chunks.duplicate`, separately from `decided`.
+
+This replaces the earlier design, in which the coordinator sent the earlier copy a
+`laterDuplicateOrdinal` hint and left the drop to the model. Haiku 4.5 and Haiku 5.5 both
+ignored the hint and kept the earlier copy in `basic-task`, so the hint field was removed
+from the chunk message.
 
 ### Claude Code transcript mapping
 
@@ -63,6 +86,7 @@ judged on its own merits. No chunk is dropped deterministically.
   to `file` with the file path as `source`. Other tools map to `tool-result` with the tool
   name as `source`.
 - The compaction summary message and the most recent human-typed prompt are protected.
+  The service also protects every other `user` chunk (see Request contract).
 - Thinking blocks are excluded. They are signed, model-internal, and cannot be replayed in
   a new session. Their count appears in the adapter's parse statistics.
 - Sidechain (subagent) entries and bookkeeping entries such as `file-history-snapshot`,

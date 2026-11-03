@@ -25,9 +25,6 @@ export function buildDecisionState(input: ClassificationInput): string {
     `source: ${input.source ?? 'unknown'}`,
     `position in session: ${input.ordinal}`,
   ]
-  if (input.laterDuplicateOrdinal !== undefined) {
-    metadata.push(`note: an identical copy of this record appears later, at position ${input.laterDuplicateOrdinal}`)
-  }
 
   return [
     'Decide whether a fresh coding-agent session needs the record below to finish the current task.',

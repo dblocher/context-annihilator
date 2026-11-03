@@ -1,4 +1,5 @@
 import type { ApiResponse, StartJobResponse } from '../../contracts/api.js'
+import type { StartJobRequest } from '../../contracts/context.js'
 import type { RequestLimits } from '../../contracts/limits.js'
 import { validateStartJobRequest } from '../../contracts/validation.js'
 import { describeError } from '../decisions/policy.js'
@@ -47,6 +48,19 @@ function existingJobResponse(
 }
 
 /**
+ * Marks every `user` chunk protected, whatever the host sent (ADR 0002). Earlier user
+ * messages can carry standing rules, so they are never classified. Applied before the request
+ * hash, so resubmissions stay idempotent and every later stage sees the same protection.
+ */
+function protectUserMessages(request: StartJobRequest): StartJobRequest {
+  if (!request.chunks.some((chunk) => chunk.kind === 'user' && !chunk.protected)) return request
+  return {
+    ...request,
+    chunks: request.chunks.map((chunk) => (chunk.kind === 'user' && !chunk.protected ? { ...chunk, protected: true } : chunk)),
+  }
+}
+
+/**
  * Validates the request, stores the full payload in S3, records the job, and starts the
  * coordinator asynchronously. Idempotent per (host, requestId).
  */
@@ -55,7 +69,7 @@ export async function startJob(deps: StartJobDeps, input: unknown): Promise<ApiR
   if (!validation.ok) {
     return { ok: false, error: { code: 'invalid-request', message: 'request failed validation', issues: validation.issues } }
   }
-  const request = validation.value
+  const request = protectUserMessages(validation.value)
   const jobId = jobIdFor(request.host, request.requestId)
   const requestHash = sha256Hex(JSON.stringify(request))
   const { pollAfterMs } = deps.settings
