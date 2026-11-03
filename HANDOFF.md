@@ -86,16 +86,24 @@ Key behavior to know before changing code:
 | `claude plugin validate ./claude-plugin` and `claude plugin validate .` with Claude Code 2.1.317 | Both pass with warnings: no `author` in plugin.json, no marketplace description. Directory-submission checks also flag no LICENSE and no icon; those only matter for publishing. The output does not say whether it checked `hooks/hooks.json`. Run with an isolated `HOME` from a throwaway install in `/tmp`; the global WSL `claude` is still 1.0.35. |
 | `claude --help` (2.1.317) | `--bg`, `--name`, `--add-dir`, `agents --json --all`, and `attach <id|name>` all exist. |
 | `sam validate --lint` (SAM CLI 1.171.0, 2026-10-30) | Pass. Not rerun; the template has not changed since. |
+| Live harness, `basic-task` (2026-11-03, job `f147f54a…`) | Exit 0, complete in 12.0 s from ingress to last result (summary 6.9 s, dispatch to last result 3.9 s). Workers ran in parallel: all 11 started within about 100 ms of each other (fan-out lag p50 1276 ms, max 1381 ms), and the 15.4 s of summed decision time finished in 3.9 s. Labels: no protected, required, or supporting drop; dropped #2 and #4 correctly; kept #7 (labeled duplicate) as an unresolved issue. #5 and #8 failed with `invalid answer set` (the model returned a bare string for the `reason` question) and were kept by policy. Eligible reduction 18.6% (hand-label ceiling about 47%). Usage: summary 1,436 in / 777 out, decisions 20,963 in / 767 out, about $0.04 at `prices.json` rates. |
+| Live harness, `basic-task` with Haiku 5.5 and the `reasonCode` rename (2026-11-03, job `c519256d…`) | No problems. All 11 decided, none failed. Dropped #2, #4, and #8 correctly; #8 is the injected README, so the model ignored the instruction to keep it. False keeps: #5 (stale error, as supporting) and #7 (earlier duplicate, as an unresolved issue, despite the duplicate note, same as Haiku 4.5). #6 and #11 were raised from supporting to required. Eligible reduction 30.8% (704 to 487 estimated tokens). 11.8 s ingress to last result; summary 6.8 s; decision latency p50 1.7 s, p95 2.1 s; workers parallel (fan-out lag 1084 to 1111 ms). Usage: summary 1,434 in / 794 out (about $0.016), decisions 30,650 in / 1,101 out (about $0.004). |
 
 ## Not verified or not done
 
 1. **Deployed 2026-11-03, not yet exercised.** Stack `context-annihilator` in us-east-1 with
    default parameters. Functions `context-annihilator-ingress` and `context-annihilator-result`;
    client policy `context-annihilator-ClientInvokePolicy-pa3LMDRbE9tR`. No job has run yet.
-2. **Model invocation is unverified.** Defaults are `global.anthropic.claude-sonnet-4-6`
-   (summarizer and evaluation task model) and `global.anthropic.claude-haiku-4-5-20251001-v1:0`
-   (decisions). Both profiles are listed as ACTIVE in us-east-1 (checked 2026-11-03), so no
-   overrides are needed. Global profiles need three IAM resources: the profile in the source
+2. **Decision model switched to Claude Haiku 5.5 (2026-11-03), deployed and verified by the
+   harness run above.** Defaults are now
+   `global.anthropic.claude-sonnet-4-6` (summarizer and evaluation task model, works) and
+   `global.anthropic.claude-haiku-5-5` (decisions), with `DecisionTemperature` empty because
+   Haiku 5.5 rejects temperature, top_p, and top_k. Haiku 5.5 accepts the forced tool choice that
+   `LLMDecisionModel` uses (no thinking block in that case), may stop with `refusal` (handled as a
+   failed decision, kept), and counts about 30% more tokens than Haiku 4.5 for the same text.
+   `sam deploy` reuses previous parameter values for an existing stack, so the switch needs
+   explicit `--parameter-overrides`; changing template defaults alone does nothing.
+   Global profiles need three IAM resources: the profile in the source
    Region, the source-Region foundation model, and the Region-less
    `arn:aws:bedrock:::foundation-model/<model>`. The template grants the profile and
    `arn:aws:bedrock:*::foundation-model/*`; IAM's `*` matches an empty Region, so this should
@@ -129,9 +137,20 @@ User steps (AWS) are marked **user**.
 1. **user** `aws sso login --profile david-dev`.
 2. Done 2026-11-03: both default inference profiles are ACTIVE in us-east-1.
 3. Done 2026-11-03: `AWS_PROFILE=david-dev npm run deploy` with default parameters.
-4. **user** Harness against the live stack:
+4. Done 2026-11-03 (third harness run passed; see Verification). History: redeploy after the `reason` to `reasonCode` question rename in
+   `src/adapters/strands/relevance-classifier.ts` (fixes the `invalid answer set` failures), then
+   rerun the harness. First run passed on 2026-11-03; see Verification. The rerun after the
+   redeploy (job `8887c876…`, 19:21 UTC) had all 11 decisions fail with an AWS Marketplace
+   `AccessDeniedException` and kept everything by policy. Cause: Haiku 4.5 had never been used in
+   the account, so the worker role's first calls started an automatic Marketplace subscription.
+   Calls work for up to 15 minutes while it finalizes, which is why the first run succeeded. The
+   subscription then failed because the role has no Marketplace permissions. Resolved by switching
+   decisions to Haiku 5.5, which the account already uses (see item 2 under Not verified).
+   Deploy with
+   `AWS_PROFILE=david-dev npm run deploy -- --parameter-overrides DecisionModelId=global.anthropic.claude-haiku-5-5 'DecisionTemperature=""'`,
+   then rerun the harness:
    `mkdir -p test/evaluation/runs && npx --yes node@22 node_modules/tsx/dist/cli.mjs scripts/harness.ts --fixture test/fixtures/basic-task.json --region us-east-1 --profile david-dev --out test/evaluation/runs/basic.json`.
-   Then check parallel worker execution in the worker logs and the `FanOutLagMs` metric.
+   Parallel fan-out is already confirmed from the result timings.
 5. **user** Evaluation:
    `npx --yes node@22 node_modules/tsx/dist/cli.mjs scripts/evaluate.ts --region us-east-1 --profile david-dev`.
    Share the report path or the printed table.

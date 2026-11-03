@@ -6,6 +6,8 @@ context record is still relevant, and returns the records to keep in their origi
 The hook then starts a fresh background Claude Code session seeded with that reduced
 context, and the old session gets no model turn.
 
+![Diagram: an old session's 13 context records pass through the Context Annihilator service (summarize the task, classify each record in parallel, apply a fail-open keep policy). A fresh session starts from a seed with the next action, a task summary, the 7 kept records in their original order, and a list of the 5 omitted records.](docs/images/context-reduction.svg)
+
 Status: built and checked offline. Not deployed yet, and no live `/annihilate` run so far.
 See `HANDOFF.md` for the current state and next steps.
 
@@ -89,6 +91,19 @@ AWS_PROFILE=<profile> npm run deploy -- --parameter-overrides \
 
 Attach the stack output `ClientInvokePolicyArn` to the IAM principal that runs the hook or
 the scripts. It allows `lambda:InvokeFunction` on the `ingress` and `result` functions only.
+
+The Lambda roles have no AWS Marketplace permissions. Bedrock enables a third-party model
+for the account on its first invocation, and that only succeeds when the caller can
+subscribe in AWS Marketplace. If a function makes the first call, it may work for a few
+minutes and then fail with `AccessDeniedException`. Before the first job, and after
+switching to a model the account has never used, call each model once with a principal
+that has `aws-marketplace:Subscribe` and `aws-marketplace:ViewSubscriptions`:
+
+```bash
+aws bedrock-runtime converse --model-id <model-or-profile-id> \
+  --messages '[{"role":"user","content":[{"text":"Reply with OK."}]}]' \
+  --inference-config maxTokens=10 --region us-east-1 --profile <admin-profile>
+```
 
 ## Run against a deployed stack
 

@@ -1,0 +1,152 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="780" viewBox="0 0 1200 780" role="img" aria-labelledby="title desc">
+  <title id="title">How /annihilate reduces context</title>
+  <desc id="desc">An old Claude Code session holds 13 records. The Context Annihilator service summarizes the task, classifies each record in parallel, and applies a fail-open keep policy. A fresh background session starts from a seed with the next action, a task summary, the 7 kept records in their original order, and a list of the 5 omitted records.</desc>
+  <defs>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#78909C"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif; fill: #263238; }
+      .title { font-size: 22px; font-weight: 700; }
+      .subtitle { font-size: 14px; fill: #607D8B; }
+      .head { font-size: 15px; font-weight: 700; }
+      .sub { font-size: 12px; fill: #78909C; }
+      .label { font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace; font-size: 12px; font-weight: 600; }
+      .text { font-size: 12px; }
+      .tag { font-size: 11.5px; font-weight: 700; text-anchor: end; }
+      .box-title { font-size: 13px; font-weight: 700; }
+      .section { font-size: 12px; font-weight: 700; }
+      .protected rect { fill: #E3F2FD; stroke: #1E88E5; }
+      .protected .tag { fill: #1565C0; }
+      .kept rect { fill: #E8F5E9; stroke: #43A047; }
+      .kept .tag { fill: #2E7D32; }
+      .dropped rect { fill: #F5F5F5; stroke: #BDBDBD; stroke-dasharray: 4 3; }
+      .dropped text { fill: #7A7A7A; }
+      .dropped .tag { fill: #7A7A7A; }
+      .step rect { fill: #FFFFFF; stroke: #546E7A; }
+    </style>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="1199" height="779" rx="16" fill="#FFFFFF" stroke="#E0E0E0"/>
+
+  <text class="title" x="24" y="48">/annihilate keeps what the next step needs and drops the rest</text>
+  <text class="subtitle" x="24" y="74">Example: test/fixtures/basic-task.json with its hand labels. Anything not clearly irrelevant is kept.</text>
+
+  <!-- ===== Left: old session ===== -->
+  <rect x="24" y="100" width="420" height="600" rx="12" fill="#FAFAFA" stroke="#E0E0E0"/>
+  <text class="head" x="40" y="128">Old session: live context</text>
+  <text class="sub" x="40" y="148">13 records in their original order</text>
+
+  <g class="protected"><rect x="36" y="164" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="185">#0 steering</text><text class="text" x="152" y="185">CLAUDE.md project rules</text><text class="tag" x="420" y="185">protected</text></g>
+  <g class="kept"><rect x="36" y="204" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="225">#1 user</text><text class="text" x="152" y="225">Fix the test. Node 18, no new deps</text><text class="tag" x="420" y="225">kept</text></g>
+  <g class="dropped"><rect x="36" y="244" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="265">#2 assistant</text><text class="text" x="152" y="265">Plan A: Temporal API (abandoned)</text><text class="tag" x="420" y="265">dropped</text></g>
+  <g class="kept"><rect x="36" y="284" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="305">#3 file</text><text class="text" x="152" y="305">src/utils/date.ts (has the bug)</text><text class="tag" x="420" y="305">kept</text></g>
+  <g class="dropped"><rect x="36" y="324" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="345">#4 file</text><text class="text" x="152" y="345">datetime-format.ts (unrelated)</text><text class="tag" x="420" y="345">dropped</text></g>
+  <g class="dropped"><rect x="36" y="364" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="385">#5 tool</text><text class="text" x="152" y="385">pnpm add error from plan A</text><text class="tag" x="420" y="385">dropped</text></g>
+  <g class="kept"><rect x="36" y="404" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="425">#6 assistant</text><text class="text" x="152" y="425">Plan B: apply the parsed offset</text><text class="tag" x="420" y="425">kept</text></g>
+  <g class="dropped"><rect x="36" y="444" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="465">#7 tool</text><text class="text" x="152" y="465">Test failure, repeated in #10</text><text class="tag" x="420" y="465">dropped</text></g>
+  <g class="dropped"><rect x="36" y="484" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="505">#8 tool</text><text class="text" x="152" y="505">README with injected instructions</text><text class="tag" x="420" y="505">dropped</text></g>
+  <g class="kept"><rect x="36" y="524" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="545">#9 file</text><text class="text" x="152" y="545">test/date.test.ts (failing test)</text><text class="tag" x="420" y="545">kept</text></g>
+  <g class="kept"><rect x="36" y="564" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="585">#10 tool</text><text class="text" x="152" y="585">Test failure, latest run</text><text class="tag" x="420" y="585">kept</text></g>
+  <g class="kept"><rect x="36" y="604" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="625">#11 assistant</text><text class="text" x="152" y="625">Next: subtract the offset</text><text class="tag" x="420" y="625">kept</text></g>
+  <g class="protected"><rect x="36" y="644" width="396" height="32" rx="6"/>
+    <text class="label" x="48" y="665">/annihilate</text><text class="text" x="152" y="665">Continue: fix the offset handling…</text><text class="tag" x="420" y="665">protected</text></g>
+
+  <!-- ===== Arrow: old session to service ===== -->
+  <polygon points="450,410 462,410 462,398 476,420 462,442 462,430 450,430" fill="#90A4AE"/>
+
+  <!-- ===== Middle: service ===== -->
+  <rect x="480" y="100" width="240" height="600" rx="12" fill="#F3F6FA" stroke="#E0E0E0"/>
+  <text class="head" x="600" y="128" text-anchor="middle">Context Annihilator</text>
+  <text class="sub" x="600" y="148" text-anchor="middle">AWS Lambda, SNS fan-out, Bedrock</text>
+
+  <g class="step"><rect x="492" y="196" width="216" height="90" rx="8"/>
+    <text class="box-title" x="506" y="220">1. Summarize the task</text>
+    <text class="text" x="506" y="240">A Bedrock model writes the</text>
+    <text class="text" x="506" y="256">goal, constraints, and</text>
+    <text class="text" x="506" y="272">current plan.</text></g>
+  <line x1="600" y1="288" x2="600" y2="306" stroke="#78909C" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <g class="step"><rect x="492" y="310" width="216" height="90" rx="8"/>
+    <text class="box-title" x="506" y="334">2. Classify in parallel</text>
+    <text class="text" x="506" y="354">One Lambda per record asks</text>
+    <text class="text" x="506" y="370">the Strands DecisionModel:</text>
+    <text class="text" x="506" y="386">is this still relevant?</text></g>
+  <line x1="600" y1="402" x2="600" y2="420" stroke="#78909C" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <g class="step"><rect x="492" y="424" width="216" height="106" rx="8"/>
+    <text class="box-title" x="506" y="448">3. Apply the keep policy</text>
+    <text class="text" x="506" y="468">Drop only records decided</text>
+    <text class="text" x="506" y="484">irrelevant. Keep protected,</text>
+    <text class="text" x="506" y="500">uncertain, failed, and</text>
+    <text class="text" x="506" y="516">timed-out records.</text></g>
+  <line x1="600" y1="532" x2="600" y2="550" stroke="#78909C" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+  <g class="step"><rect x="492" y="554" width="216" height="90" rx="8"/>
+    <text class="box-title" x="506" y="578">4. Start a fresh session</text>
+    <text class="text" x="506" y="598">claude --bg with the seed.</text>
+    <text class="text" x="506" y="614">The old session gets no</text>
+    <text class="text" x="506" y="630">model turn.</text></g>
+
+  <!-- ===== Arrow: service to new session ===== -->
+  <polygon points="726,410 738,410 738,398 752,420 738,442 738,430 726,430" fill="#90A4AE"/>
+
+  <!-- ===== Right: new session seed ===== -->
+  <rect x="756" y="100" width="420" height="600" rx="12" fill="#FAFAFA" stroke="#E0E0E0"/>
+  <text class="head" x="772" y="128">New session: handoff seed</text>
+  <text class="sub" x="772" y="148">The first prompt of a fresh background session</text>
+
+  <g class="protected"><rect x="768" y="164" width="396" height="62" rx="6"/>
+    <text class="section" x="780" y="184">Next action</text>
+    <text class="text" x="780" y="202">Continue: fix the offset handling in parseIsoDate so</text>
+    <text class="text" x="780" y="218">the failing test passes, then run the tests.</text></g>
+
+  <rect x="768" y="236" width="396" height="62" rx="6" fill="#FFF8E1" stroke="#F9A825"/>
+  <text class="section" x="780" y="256">Task summary (generated)</text>
+  <text class="text" x="780" y="274">Goal, constraints (Node 18, no new deps, pnpm), and</text>
+  <text class="text" x="780" y="290">the current plan, written by the summarizer.</text>
+
+  <text class="section" x="768" y="324">Retained records, in original order</text>
+  <g class="protected"><rect x="768" y="334" width="396" height="26" rx="5"/>
+    <text class="label" x="780" y="351">#0 steering</text><text class="text" x="884" y="351">CLAUDE.md project rules</text></g>
+  <g class="kept"><rect x="768" y="366" width="396" height="26" rx="5"/>
+    <text class="label" x="780" y="383">#1 user</text><text class="text" x="884" y="383">Fix the test. Node 18, no new deps</text></g>
+  <g class="kept"><rect x="768" y="398" width="396" height="26" rx="5"/>
+    <text class="label" x="780" y="415">#3 file</text><text class="text" x="884" y="415">src/utils/date.ts</text></g>
+  <g class="kept"><rect x="768" y="430" width="396" height="26" rx="5"/>
+    <text class="label" x="780" y="447">#6 assistant</text><text class="text" x="884" y="447">Plan B: apply the parsed offset</text></g>
+  <g class="kept"><rect x="768" y="462" width="396" height="26" rx="5"/>
+    <text class="label" x="780" y="479">#9 file</text><text class="text" x="884" y="479">test/date.test.ts</text></g>
+  <g class="kept"><rect x="768" y="494" width="396" height="26" rx="5"/>
+    <text class="label" x="780" y="511">#10 tool</text><text class="text" x="884" y="511">Test failure, latest run</text></g>
+  <g class="kept"><rect x="768" y="526" width="396" height="26" rx="5"/>
+    <text class="label" x="780" y="543">#11 assistant</text><text class="text" x="884" y="543">Next: subtract the offset</text></g>
+
+  <g class="dropped"><rect x="768" y="566" width="396" height="80" rx="6"/>
+    <text class="section" x="780" y="586">Omitted context (listed, not included)</text>
+    <text class="text" x="780" y="604">#2 plan A, #4 datetime-format.ts, #5 pnpm add error,</text>
+    <text class="text" x="780" y="620">#7 duplicate test failure, #8 injected README.</text>
+    <text class="text" x="780" y="636">The new session can re-read a file if it needs one.</text></g>
+
+  <text class="section" x="772" y="676" style="fill:#2E7D32; font-size:13px">7 of 12 records kept, plus the next action and a summary</text>
+
+  <!-- ===== Legend ===== -->
+  <g class="protected"><rect x="24" y="726" width="18" height="18" rx="4"/></g>
+  <text class="text" x="50" y="740">Protected: never classified or dropped</text>
+  <g class="kept"><rect x="330" y="726" width="18" height="18" rx="4"/></g>
+  <text class="text" x="356" y="740">Kept: required, supporting, uncertain, or failed</text>
+  <g class="dropped"><rect x="672" y="726" width="18" height="18" rx="4"/></g>
+  <text class="text" x="698" y="740">Dropped: decided irrelevant, then listed in the seed</text>
+</svg>

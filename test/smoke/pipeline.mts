@@ -110,10 +110,10 @@ class FakeDecisionModel extends DecisionModel {
     // c07 and c10 have identical content; only the earlier copy carries the duplicate hint.
     if (id === 'c07-test-failure-first' && !text.includes('identical copy')) id = 'c10-test-failure-latest'
     if (id === 'c03-read-date-ts') throw new Error('ThrottlingException: simulated')
-    if (id === 'c11-assistant-next') return { answers: { relevance: new Uncertain('not enough information'), reason: new Uncertain() }, metadata: { latencyMs: 7 } }
+    if (id === 'c11-assistant-next') return { answers: { relevance: new Uncertain('not enough information'), reasonCode: new Uncertain() }, metadata: { latencyMs: 7 } }
     const label = id ? labels[id]?.label ?? 'supporting' : 'supporting'
     const reason = label === 'irrelevant' ? (id === 'c07-test-failure-first' ? 'duplicate' : 'unrelated') : label === 'required' ? 'direct-dependency' : 'continuity'
-    return { answers: { relevance: label, reason }, usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 }, metadata: { latencyMs: 12 } }
+    return { answers: { relevance: label, reasonCode: reason }, usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 }, metadata: { latencyMs: 12 } }
   }
 }
 const classifier = new StrandsRelevanceClassifier(
@@ -184,7 +184,7 @@ check('earlier duplicate gets a later-duplicate hint', () => {
 })
 check('Strands ask accepted the question map', () => {
   assert.ok(askedQuestions.length >= 9)
-  assert.deepEqual(Object.keys(askedQuestions[0]), ['relevance', 'reason'])
+  assert.deepEqual(Object.keys(askedQuestions[0]), ['relevance', 'reasonCode'])
 })
 
 const c08 = published.find((m) => m.chunkId === 'c08-injection')

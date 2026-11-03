@@ -1,11 +1,13 @@
 {
-  "note": "USD per million tokens, Standard tier, global cross-Region inference profiles called from us-east-1. Geographic (us.) and in-Region model IDs cost 10% more. Prices change; check the Bedrock pricing page before relying on these numbers.",
-  "source": "https://www.cloudforecast.io/blog/aws-bedrock-pricing/ (October 2026 table); confirm at https://aws.amazon.com/bedrock/pricing/",
-  "checkedOn": "2026-10-30",
+  "note": "USD per million tokens, Standard tier, called from us-east-1. Global cross-Region profiles are the base price; geographic (us.) and in-Region model IDs cost 10% more. Claude Haiku 5.5 prices apply to prompts of 100,000 tokens or fewer; longer prompts are billed at a higher long-context rate that this table does not model. Prices change; check the Bedrock pricing page before relying on these numbers.",
+  "source": "Sonnet 4.6 and Haiku 4.5: https://www.cloudforecast.io/blog/aws-bedrock-pricing/ (October 2026 table). Haiku 5.5: https://futureagi.com/llm-cost-calculator/bedrock/global-anthropic-claude-haiku-5-5/ and the us. page on the same site. Confirm at https://aws.amazon.com/bedrock/pricing/",
+  "checkedOn": "2026-11-03",
   "models": {
     "global.anthropic.claude-sonnet-4-6": { "inputPerMTok": 3.0, "outputPerMTok": 15.0 },
+    "global.anthropic.claude-haiku-5-5": { "inputPerMTok": 0.1, "outputPerMTok": 0.5 },
     "global.anthropic.claude-haiku-4-5-20251001-v1:0": { "inputPerMTok": 1.0, "outputPerMTok": 5.0 },
     "us.anthropic.claude-sonnet-4-6": { "inputPerMTok": 3.3, "outputPerMTok": 16.5 },
+    "us.anthropic.claude-haiku-5-5": { "inputPerMTok": 0.11, "outputPerMTok": 0.55 },
     "us.anthropic.claude-haiku-4-5-20251001-v1:0": { "inputPerMTok": 1.1, "outputPerMTok": 5.5 }
   }
 }

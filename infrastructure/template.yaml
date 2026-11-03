@@ -13,12 +13,14 @@ Parameters:
     Description: Bedrock model or inference profile ID for the generative task summarizer.
   DecisionModelId:
     Type: String
-    Default: global.anthropic.claude-haiku-4-5-20251001-v1:0
+    Default: global.anthropic.claude-haiku-5-5
     Description: Bedrock model or inference profile ID behind the Strands LLMDecisionModel.
   DecisionTemperature:
     Type: String
-    Default: '0'
-    Description: Sampling temperature for decisions. Empty uses the model default.
+    Default: ''
+    Description: >-
+      Sampling temperature for decisions. Empty omits it and uses the model default. Leave empty
+      for Claude Haiku 5.5, which rejects sampling parameters.
   AllowUncertain:
     Type: String
     Default: 'true'

@@ -48,13 +48,16 @@ export class StrandsRelevanceClassifier implements RelevanceClassifier {
         : true
       : false
 
+    // Question IDs become property names in the structured-output schema, and LLMDecisionModel
+    // gives every answer object an optional `reason` string. A question named `reason` made the
+    // model sometimes return a bare string in its place, which fails schema validation.
     const result = await this.decisionModel.ask(buildDecisionState(input), {
       relevance: { question: RELEVANCE_QUESTION.question, choices: RELEVANCE_QUESTION.choices, uncertainty },
-      reason: { question: REASON_QUESTION.question, choices: REASON_QUESTION.choices },
+      reasonCode: { question: REASON_QUESTION.question, choices: REASON_QUESTION.choices },
     })
 
     const relevance: RelevanceLabel | Uncertain = result.answers.relevance
-    const reason: ReasonCode | Uncertain = result.answers.reason
+    const reason: ReasonCode | Uncertain = result.answers.reasonCode
     const usage = result.usage
       ? { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens }
       : undefined
