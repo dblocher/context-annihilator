@@ -89,11 +89,17 @@ Key behavior to know before changing code:
 
 ## Not verified or not done
 
-1. **No deployment.** Nothing has called Bedrock, SNS, DynamoDB, or S3 for real.
-2. **Model IDs and access are unverified.** Defaults are `global.anthropic.claude-sonnet-4-6`
+1. **Deployed 2026-11-03, not yet exercised.** Stack `context-annihilator` in us-east-1 with
+   default parameters. Functions `context-annihilator-ingress` and `context-annihilator-result`;
+   client policy `context-annihilator-ClientInvokePolicy-pa3LMDRbE9tR`. No job has run yet.
+2. **Model invocation is unverified.** Defaults are `global.anthropic.claude-sonnet-4-6`
    (summarizer and evaluation task model) and `global.anthropic.claude-haiku-4-5-20251001-v1:0`
-   (decisions). The IAM statements grant `foundation-model/*` in any region plus the named
-   inference profile. Confirm that this is enough for global cross-region profiles.
+   (decisions). Both profiles are listed as ACTIVE in us-east-1 (checked 2026-11-03), so no
+   overrides are needed. Global profiles need three IAM resources: the profile in the source
+   Region, the source-Region foundation model, and the Region-less
+   `arn:aws:bedrock:::foundation-model/<model>`. The template grants the profile and
+   `arn:aws:bedrock:*::foundation-model/*`; IAM's `*` matches an empty Region, so this should
+   cover all three. A first real job will confirm it.
 3. **No live `/annihilate` run.** The real `claude --bg` output format and whether it detaches its
    stdout are unconfirmed. The parser expects the 2.1.316 format.
 4. **Global Claude Code in WSL is 1.0.35**, too old for the plugin (needs 2.1.295+).
@@ -121,12 +127,8 @@ Key behavior to know before changing code:
 User steps (AWS) are marked **user**.
 
 1. **user** `aws sso login --profile david-dev`.
-2. **user** Check model access:
-   `aws bedrock list-inference-profiles --region us-east-1 --profile david-dev --query "inferenceProfileSummaries[?contains(inferenceProfileId, 'claude')].[inferenceProfileId,status]" --output table`.
-   Share the output if the defaults are missing, so the agent can pick overrides.
-3. **user** Deploy: `AWS_PROFILE=david-dev npm run deploy`. Add
-   `-- --parameter-overrides SummaryModelId=... DecisionModelId=... AlarmEmail=...` as needed.
-   Share the stack outputs.
+2. Done 2026-11-03: both default inference profiles are ACTIVE in us-east-1.
+3. Done 2026-11-03: `AWS_PROFILE=david-dev npm run deploy` with default parameters.
 4. **user** Harness against the live stack:
    `mkdir -p test/evaluation/runs && npx --yes node@22 node_modules/tsx/dist/cli.mjs scripts/harness.ts --fixture test/fixtures/basic-task.json --region us-east-1 --profile david-dev --out test/evaluation/runs/basic.json`.
    Then check parallel worker execution in the worker logs and the `FanOutLagMs` metric.
