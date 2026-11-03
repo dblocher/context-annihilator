@@ -1,0 +1,37 @@
+{
+  "name": "context-annihilator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal experiment: summarize a coding-agent task, classify context chunks for relevance in parallel, and hand off a reduced seed to a fresh Claude Code background session.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "validate": "uvx --from aws-sam-cli sam validate --lint -t infrastructure/template.yaml",
+    "package": "npm run build && uvx --from aws-sam-cli sam package -t infrastructure/template.yaml --resolve-s3 --output-template-file .aws-sam/packaged.yaml",
+    "deploy": "npm run build && uvx --from aws-sam-cli sam deploy -t infrastructure/template.yaml --stack-name context-annihilator --capabilities CAPABILITY_IAM --resolve-s3 --no-fail-on-empty-changeset",
+    "harness": "tsx scripts/harness.ts",
+    "evaluate": "tsx scripts/evaluate.ts",
+    "smoke": "tsx test/smoke/pipeline.mts && node scripts/build.mjs && node test/smoke/bundles.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1160.0",
+    "@aws-sdk/client-dynamodb": "^3.1160.0",
+    "@aws-sdk/client-lambda": "^3.1160.0",
+    "@aws-sdk/client-s3": "^3.1160.0",
+    "@aws-sdk/client-sns": "^3.1160.0",
+    "@aws-sdk/lib-dynamodb": "^3.1160.0",
+    "@aws-sdk/s3-request-presigner": "^3.1160.0",
+    "@strands-agents/sdk": "^1.22.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.164",
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

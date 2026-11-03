@@ -1,0 +1,625 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Context Annihilator MVP (personal experiment). Summarizes a coding-agent task, fans out one
+  relevance decision per context chunk through SNS, aggregates results in DynamoDB, and serves
+  ordered keep/drop results to an IAM-authenticated client. No public endpoints.
+  Build first with `npm run build`; CodeUri points at the prebuilt bundles in ../dist.
+
+Parameters:
+  SummaryModelId:
+    Type: String
+    Default: global.anthropic.claude-sonnet-4-6
+    Description: Bedrock model or inference profile ID for the generative task summarizer.
+  DecisionModelId:
+    Type: String
+    Default: global.anthropic.claude-haiku-4-5-20251001-v1:0
+    Description: Bedrock model or inference profile ID behind the Strands LLMDecisionModel.
+  DecisionTemperature:
+    Type: String
+    Default: '0'
+    Description: Sampling temperature for decisions. Empty uses the model default.
+  AllowUncertain:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Whether the decision model may answer uncertain. Uncertain chunks are always kept.
+  UncertaintyMinConfidence:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional minimum confidence (0-1) for providers that report confidence. Ignored by
+      LLMDecisionModel. Leave empty until a provider is measured on the labeled set.
+  DecisionDeadlineMs:
+    Type: Number
+    Default: 60000
+    MinValue: 5000
+    Description: Time after dispatch before missing chunk results count as timed out (and are kept).
+  CoordinatorDeadlineMs:
+    Type: Number
+    Default: 180000
+    MinValue: 10000
+    Description: Time after ingress before a job that was never dispatched counts as failed. Keep above the coordinator timeout.
+  PublishConcurrency:
+    Type: Number
+    Default: 8
+    MinValue: 1
+    Description: Concurrent SNS PublishBatch calls in the coordinator.
+  WorkerReservedConcurrency:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    Description: Reserved concurrency cap for decision workers. 0 leaves the function unreserved.
+  MaxChunks:
+    Type: Number
+    Default: 1000
+    MinValue: 1
+  MaxChunkBytes:
+    Type: Number
+    Default: 65536
+    MinValue: 1024
+  MaxTotalBytes:
+    Type: Number
+    Default: 5242880
+    MinValue: 1024
+    MaxValue: 5800000
+    Description: Total request content limit. Must stay under the 6 MB synchronous invoke payload limit.
+  JobTtlSeconds:
+    Type: Number
+    Default: 86400
+    MinValue: 300
+    Description: DynamoDB TTL for job metadata and chunk results.
+  PayloadRetentionDays:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    Description: S3 lifecycle expiration for request, chunk, and result payloads.
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90]
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Optional email address for alarm notifications.
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
+  HasWorkerReservedConcurrency: !Not [!Equals [!Ref WorkerReservedConcurrency, 0]]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    Handler: index.handler
+    MemorySize: 512
+    Environment:
+      Variables:
+        NODE_OPTIONS: --enable-source-maps
+        TABLE_NAME: !Ref JobsTable
+        BUCKET_NAME: !Ref PayloadBucket
+        JOB_TTL_SECONDS: !Ref JobTtlSeconds
+        METRICS_NAMESPACE: ContextAnnihilator
+
+Resources:
+  # ---------- Storage ----------
+  PayloadBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-transient-payloads
+            Status: Enabled
+            ExpirationInDays: !Ref PayloadRetentionDays
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  PayloadBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PayloadBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt PayloadBucket.Arn
+              - !Sub '${PayloadBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------- Messaging ----------
+  ChunkTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      KmsMasterKeyId: alias/aws/sns
+
+  SnsDeliveryDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+
+  SnsDeliveryDlqPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref SnsDeliveryDlq]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowChunkTopicRedrive
+            Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt SnsDeliveryDlq.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref ChunkTopic
+
+  AsyncFailureQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600
+
+  # ---------- Logs ----------
+  IngressLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-ingress'
+      RetentionInDays: !Ref LogRetentionDays
+
+  CoordinatorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-coordinator'
+      RetentionInDays: !Ref LogRetentionDays
+
+  DecisionWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-decision-worker'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ResultLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-result'
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ---------- Functions ----------
+  IngressFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-ingress'
+      Description: Validates a start-job request, stores the payload, records the job, and starts the coordinator.
+      CodeUri: ../dist/functions/ingress
+      Timeout: 20
+      LoggingConfig:
+        LogGroup: !Ref IngressLogGroup
+      Environment:
+        Variables:
+          COORDINATOR_FUNCTION_NAME: !Ref CoordinatorFunction
+          COORDINATOR_DEADLINE_MS: !Ref CoordinatorDeadlineMs
+          POLL_AFTER_MS: '1500'
+          MAX_CHUNKS: !Ref MaxChunks
+          MAX_CHUNK_BYTES: !Ref MaxChunkBytes
+          MAX_TOTAL_BYTES: !Ref MaxTotalBytes
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub '${PayloadBucket.Arn}/jobs/*'
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !GetAtt CoordinatorFunction.Arn
+
+  CoordinatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-coordinator'
+      Description: Summarizes the task with Bedrock and publishes one SNS message per eligible chunk.
+      CodeUri: ../dist/functions/coordinator
+      Timeout: 150
+      MemorySize: 1024
+      LoggingConfig:
+        LogGroup: !Ref CoordinatorLogGroup
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 60
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination: !GetAtt AsyncFailureQueue.Arn
+      Environment:
+        Variables:
+          TOPIC_ARN: !Ref ChunkTopic
+          SUMMARY_MODEL_ID: !Ref SummaryModelId
+          DECISION_DEADLINE_MS: !Ref DecisionDeadlineMs
+          PUBLISH_CONCURRENCY: !Ref PublishConcurrency
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject]
+              Resource: !Sub '${PayloadBucket.Arn}/jobs/*'
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref ChunkTopic
+            - Effect: Allow
+              Action: [kms:GenerateDataKey*, kms:Decrypt]
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub 'sns.${AWS::Region}.amazonaws.com'
+            - Effect: Allow
+              Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/*'
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${SummaryModelId}'
+
+  DecisionWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-decision-worker'
+      Description: Classifies one chunk with the Strands DecisionModel and writes one idempotent result.
+      CodeUri: ../dist/functions/decision-worker
+      Timeout: 45
+      LoggingConfig:
+        LogGroup: !Ref DecisionWorkerLogGroup
+      ReservedConcurrentExecutions: !If [HasWorkerReservedConcurrency, !Ref WorkerReservedConcurrency, !Ref AWS::NoValue]
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 60
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination: !GetAtt AsyncFailureQueue.Arn
+      Events:
+        ChunkMessages:
+          Type: SNS
+          Properties:
+            Topic: !Ref ChunkTopic
+            RedrivePolicy:
+              deadLetterTargetArn: !GetAtt SnsDeliveryDlq.Arn
+      Environment:
+        Variables:
+          DECISION_MODEL_ID: !Ref DecisionModelId
+          DECISION_TEMPERATURE: !Ref DecisionTemperature
+          DECISION_REQUEST_TIMEOUT_MS: '30000'
+          ALLOW_UNCERTAIN: !Ref AllowUncertain
+          UNCERTAINTY_MIN_CONFIDENCE: !Ref UncertaintyMinConfidence
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub '${PayloadBucket.Arn}/jobs/*'
+            - Effect: Allow
+              Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:*::foundation-model/*'
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${DecisionModelId}'
+
+  ResultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-result'
+      Description: Reports job progress, or assembles and freezes the ordered keep/drop result.
+      CodeUri: ../dist/functions/result
+      Timeout: 30
+      MemorySize: 1024
+      LoggingConfig:
+        LogGroup: !Ref ResultLogGroup
+      Environment:
+        Variables:
+          INLINE_RESULT_MAX_BYTES: '5000000'
+          RESULT_URL_TTL_SECONDS: '300'
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:Query, dynamodb:UpdateItem]
+              Resource: !GetAtt JobsTable.Arn
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject]
+              Resource: !Sub '${PayloadBucket.Arn}/jobs/*'
+
+  # ---------- Client access ----------
+  ClientInvokePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Least-privilege policy for a local client (harness or Claude Code hook).
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource:
+              - !GetAtt IngressFunction.Arn
+              - !GetAtt ResultFunction.Arn
+
+  # ---------- Alarms ----------
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
+
+  IngressErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Ingress function errors.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref IngressFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  CoordinatorErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Coordinator function errors (crashes; summarizer failures are counted by CoordinatorFailures).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref CoordinatorFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  CoordinatorFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Jobs failed before dispatch (for example, summarizer errors).
+      Namespace: ContextAnnihilator
+      MetricName: CoordinatorFailures
+      Dimensions: [{ Name: Service, Value: context-annihilator }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  CoordinatorDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Coordinator duration is close to its 150 s timeout.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions: [{ Name: FunctionName, Value: !Ref CoordinatorFunction }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 120000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  WorkerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Decision worker crashes. Classification errors are kept and counted by ChunkFailures.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref DecisionWorkerFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  WorkerThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Decision workers are being throttled, which delays fan-out.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions: [{ Name: FunctionName, Value: !Ref DecisionWorkerFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  WorkerDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Decision worker p95 duration is above 80% of its 45 s timeout.
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions: [{ Name: FunctionName, Value: !Ref DecisionWorkerFunction }]
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 36000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  WorkerAsyncEventAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Chunk events wait too long in the Lambda async queue before a worker starts.
+      Namespace: AWS/Lambda
+      MetricName: AsyncEventAge
+      Dimensions: [{ Name: FunctionName, Value: !Ref DecisionWorkerFunction }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 20000
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  ResultErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Result function errors.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref ResultFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  SnsDeliveryFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: SNS failed to deliver chunk messages to the decision worker.
+      Namespace: AWS/SNS
+      MetricName: NumberOfNotificationsFailed
+      Dimensions: [{ Name: TopicName, Value: !GetAtt ChunkTopic.TopicName }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  SnsDeliveryDlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Chunk messages reached the SNS delivery DLQ.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt SnsDeliveryDlq.QueueName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  AsyncFailureQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Coordinator or worker async invocations failed or expired.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt AsyncFailureQueue.QueueName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  ChunkFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Chunk classifications failed and were kept by policy.
+      Namespace: ContextAnnihilator
+      MetricName: ChunkFailures
+      Dimensions: [{ Name: Service, Value: context-annihilator }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+  ChunksTimedOutAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Chunks had no result before the job deadline and were kept by policy.
+      Namespace: ContextAnnihilator
+      MetricName: ChunksTimedOut
+      Dimensions: [{ Name: Service, Value: context-annihilator }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+Outputs:
+  IngressFunctionName:
+    Value: !Ref IngressFunction
+  ResultFunctionName:
+    Value: !Ref ResultFunction
+  ClientInvokePolicyArn:
+    Description: Attach to the IAM principal that runs the harness or the Claude Code hook.
+    Value: !Ref ClientInvokePolicy
+  PayloadBucketName:
+    Value: !Ref PayloadBucket
+  JobsTableName:
+    Value: !Ref JobsTable
+  ChunkTopicArn:
+    Value: !Ref ChunkTopic
+  SnsDeliveryDlqUrl:
+    Value: !Ref SnsDeliveryDlq
+  AsyncFailureQueueUrl:
+    Value: !Ref AsyncFailureQueue

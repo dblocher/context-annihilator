@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "description": "Rename fetchUser to getUser, with a later user constraint to keep fetchUser as a deprecated public alias. Most of the context is needed. Covers a file split into two parts, an identical grep output repeated later, a look-alike file, and a constraint that arrives after the original request.",
+  "labels": {
+    "c01-user-request": { "label": "required", "note": "The task." },
+    "c02-grep-first": { "label": "irrelevant", "note": "Identical to c07, which is later." },
+    "c03-read-users#1": { "label": "required", "note": "Part 1 of the file to change: the definition." },
+    "c03-read-users#2": { "label": "required", "note": "Part 2 of the same file: an internal call site." },
+    "c04-read-billing": { "label": "irrelevant", "note": "Look-alike fetchInvoice; nothing to rename." },
+    "c05-read-index": { "label": "required", "note": "Public exports; where the alias goes." },
+    "c06-user-constraint": { "label": "required", "note": "Keep fetchUser exported as a deprecated alias." },
+    "c07-grep-latest": { "label": "required", "note": "All call sites." },
+    "c08-read-profile": { "label": "supporting", "note": "One call site, already listed by the grep." },
+    "c09-assistant-plan": { "label": "supporting", "note": "Current plan; continuity." }
+  },
+  "task": {
+    "checks": [
+      { "id": "edits-users-service", "description": "Renames the definition.", "fields": ["filesToEdit"], "pattern": "(^|/)src/services/users\\.ts$", "expect": "present" },
+      { "id": "edits-index", "description": "Updates the public exports.", "fields": ["filesToEdit"], "pattern": "(^|/)src/index\\.ts$", "expect": "present" },
+      { "id": "keeps-alias", "description": "Keeps fetchUser exported as an alias of getUser.", "fields": ["patch"], "pattern": "fetchUser\\s*=\\s*getUser|getUser\\s+as\\s+fetchUser", "expect": "present" },
+      { "id": "marks-deprecated", "description": "Marks the alias deprecated, as the user asked.", "fields": ["patch"], "pattern": "deprecat", "flags": "i", "expect": "present" },
+      { "id": "pnpm-only", "description": "Follows the steering rule to use pnpm.", "fields": ["commands"], "pattern": "^(npm|npx|yarn)\\b", "expect": "absent" },
+      { "id": "leaves-billing", "description": "Does not touch the look-alike billing service.", "fields": ["filesToEdit"], "pattern": "billing", "expect": "absent" }
+    ]
+  },
+  "request": {
+    "requestId": "fixture-rename-alias",
+    "host": "fixture",
+    "currentPrompt": "Go ahead with the rename.",
+    "chunks": [
+      {
+        "id": "c00-steering",
+        "ordinal": 0,
+        "kind": "steering",
+        "source": "CLAUDE.md",
+        "protected": true,
+        "content": "Use pnpm. Public exports are listed in src/index.ts. The public API follows semver: never remove an export without first shipping it deprecated."
+      },
+      {
+        "id": "c01-user-request",
+        "ordinal": 1,
+        "kind": "user",
+        "source": "user",
+        "protected": false,
+        "content": "Rename fetchUser to getUser everywhere in src/ and test/."
+      },
+      {
+        "id": "c02-grep-first",
+        "ordinal": 2,
+        "kind": "tool-result",
+        "source": "Bash",
+        "protected": false,
+        "content": "Tool call: Bash\ncommand: grep -rn fetchUser src test\nResult:\nsrc/services/users.ts:8:export async function fetchUser(id: string): Promise<User> {\nsrc/services/users.ts:25:export async function fetchUsers(ids: string[]): Promise<User[]> {\nsrc/services/users.ts:26:  return Promise.all(ids.map((id) => fetchUser(id)))\nsrc/index.ts:3:export { fetchUser, createUser } from './services/users'\nsrc/pages/profile.tsx:2:import { fetchUser } from '../services/users'\nsrc/pages/profile.tsx:5:  const user = useLoaderData() as Awaited<ReturnType<typeof fetchUser>>\nsrc/pages/profile.tsx:9:export const loader = async ({ params }: { params: { id: string } }) => fetchUser(params.id)\ntest/users.test.ts:1:import { fetchUser } from '../src/services/users'\ntest/users.test.ts:6:  const user = await fetchUser('u1')"
+      },
+      {
+        "id": "c03-read-users#1",
+        "ordinal": 3,
+        "kind": "file",
+        "source": "src/services/users.ts [part 1/2]",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/services/users.ts\nResult:\n1  import { http } from '../lib/http'\n2\n3  export type User = { id: string; name: string; email: string }\n4\n5  /**\n6   * Loads one user by ID.\n7   */\n8  export async function fetchUser(id: string): Promise<User> {\n9    const response = await http.get(`/users/${encodeURIComponent(id)}`)\n10   return response.data as User\n11 }\n12\n13 export async function updateUserEmail(id: string, email: string): Promise<User> {\n14   const response = await http.patch(`/users/${encodeURIComponent(id)}`, { email })\n15   return response.data as User\n16 }\n17\n18 export async function deleteUser(id: string): Promise<void> {\n19   await http.delete(`/users/${encodeURIComponent(id)}`)\n20 }\n21\n22 /**\n23  * Loads many users in parallel. Order matches `ids`.\n24  */\n"
+      },
+      {
+        "id": "c03-read-users#2",
+        "ordinal": 4,
+        "kind": "file",
+        "source": "src/services/users.ts [part 2/2]",
+        "protected": false,
+        "content": "25 export async function fetchUsers(ids: string[]): Promise<User[]> {\n26   return Promise.all(ids.map((id) => fetchUser(id)))\n27 }\n28\n29 export async function createUser(input: Omit<User, 'id'>): Promise<User> {\n30   const response = await http.post('/users', input)\n31   return response.data as User\n32 }\n"
+      },
+      {
+        "id": "c04-read-billing",
+        "ordinal": 5,
+        "kind": "file",
+        "source": "src/services/billing.ts",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/services/billing.ts\nResult:\n1  import { http } from '../lib/http'\n2\n3  export async function fetchInvoice(id: string) {\n4    const response = await http.get(`/invoices/${encodeURIComponent(id)}`)\n5    return response.data\n6  }\n"
+      },
+      {
+        "id": "c05-read-index",
+        "ordinal": 6,
+        "kind": "file",
+        "source": "src/index.ts",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/index.ts\nResult:\n1  // Public API. Semver-stable: deprecate before removing anything.\n2  export type { User } from './services/users'\n3  export { fetchUser, createUser } from './services/users'\n4  export { formatName } from './lib/format'\n"
+      },
+      {
+        "id": "c06-user-constraint",
+        "ordinal": 7,
+        "kind": "user",
+        "source": "user",
+        "protected": false,
+        "content": "Wait: fetchUser is part of our public API. Keep exporting it from src/index.ts as a deprecated alias of getUser so we don't break consumers."
+      },
+      {
+        "id": "c07-grep-latest",
+        "ordinal": 8,
+        "kind": "tool-result",
+        "source": "Bash",
+        "protected": false,
+        "content": "Tool call: Bash\ncommand: grep -rn fetchUser src test\nResult:\nsrc/services/users.ts:8:export async function fetchUser(id: string): Promise<User> {\nsrc/services/users.ts:25:export async function fetchUsers(ids: string[]): Promise<User[]> {\nsrc/services/users.ts:26:  return Promise.all(ids.map((id) => fetchUser(id)))\nsrc/index.ts:3:export { fetchUser, createUser } from './services/users'\nsrc/pages/profile.tsx:2:import { fetchUser } from '../services/users'\nsrc/pages/profile.tsx:5:  const user = useLoaderData() as Awaited<ReturnType<typeof fetchUser>>\nsrc/pages/profile.tsx:9:export const loader = async ({ params }: { params: { id: string } }) => fetchUser(params.id)\ntest/users.test.ts:1:import { fetchUser } from '../src/services/users'\ntest/users.test.ts:6:  const user = await fetchUser('u1')"
+      },
+      {
+        "id": "c08-read-profile",
+        "ordinal": 9,
+        "kind": "file",
+        "source": "src/pages/profile.tsx",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/pages/profile.tsx\nResult:\n1  import { useLoaderData } from 'react-router-dom'\n2  import { fetchUser } from '../services/users'\n3\n4  export function ProfilePage() {\n5    const user = useLoaderData() as Awaited<ReturnType<typeof fetchUser>>\n6    return <h1>{user.name}</h1>\n7  }\n8\n9  export const loader = async ({ params }: { params: { id: string } }) => fetchUser(params.id)\n"
+      },
+      {
+        "id": "c09-assistant-plan",
+        "ordinal": 10,
+        "kind": "assistant",
+        "source": "assistant",
+        "protected": false,
+        "content": "Plan: rename the function in src/services/users.ts (fetchUsers keeps its name; it only calls the renamed function), update the call sites from the grep in src/pages/profile.tsx and test/users.test.ts, and in src/index.ts export getUser plus a fetchUser alias marked @deprecated."
+      }
+    ]
+  }
+}

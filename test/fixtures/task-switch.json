@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "description": "The user abandons a navbar CSS fix and switches to adding cursor pagination to GET /api/orders. Covers an abandoned task, a standing constraint (schema freeze) stated inside the abandoned request, a look-alike file that shows the pattern to reuse, and evidence that no schema change is needed.",
+  "labels": {
+    "c01-user-navbar": { "label": "required", "note": "The navbar request is abandoned, but the schema freeze stated here still applies." },
+    "c02-assistant-navbar-start": { "label": "irrelevant", "note": "Abandoned task." },
+    "c03-read-navbar-css": { "label": "irrelevant", "note": "Abandoned task." },
+    "c04-read-navbar-tsx": { "label": "irrelevant", "note": "Abandoned task." },
+    "c05-build-error": { "label": "irrelevant", "note": "Type error in the abandoned navbar work." },
+    "c06-assistant-navbar-diagnosis": { "label": "irrelevant", "note": "Abandoned task." },
+    "c07-user-switch": { "label": "required", "note": "The current task and its compatibility constraint." },
+    "c08-read-orders": { "label": "required", "note": "The handler to change." },
+    "c09-read-products": { "label": "supporting", "note": "Existing cursor pagination to copy." },
+    "c10-read-pagination": { "label": "required", "note": "Helpers the steering file says to reuse." },
+    "c11-grep-schema": { "label": "supporting", "note": "The existing index supports keyset paging, so no migration is needed." },
+    "c12-read-orders-test": { "label": "supporting", "note": "Test to extend." },
+    "c13-assistant-plan": { "label": "supporting", "note": "Current plan; continuity." }
+  },
+  "task": {
+    "checks": [
+      { "id": "edits-orders", "description": "Edits the orders handler.", "fields": ["filesToEdit"], "pattern": "(^|/)src/api/orders\\.ts$", "expect": "present" },
+      { "id": "leaves-navbar", "description": "Does not touch the abandoned navbar work.", "fields": ["filesToEdit"], "pattern": "Navbar|\\.css$", "expect": "absent" },
+      { "id": "no-schema-files", "description": "Respects the schema freeze: no schema or migration files.", "fields": ["filesToEdit"], "pattern": "(^|/)(db/schema\\.sql|migrations?/)", "expect": "absent" },
+      { "id": "no-schema-ddl", "description": "Respects the schema freeze: no DDL in the patch.", "fields": ["patch", "commands"], "pattern": "\\b(ALTER\\s+TABLE|CREATE\\s+(UNIQUE\\s+)?INDEX|CREATE\\s+TABLE)\\b", "flags": "i", "expect": "absent" },
+      { "id": "reuses-helpers", "description": "Reuses the shared cursor helpers.", "fields": ["patch"], "pattern": "encodeCursor|decodeCursor", "expect": "present" },
+      { "id": "keeps-total", "description": "Keeps the total field for old clients.", "fields": ["patch"], "pattern": "\\btotal\\b", "expect": "present" },
+      { "id": "npm-only", "description": "Follows the steering rule to use npm.", "fields": ["commands"], "pattern": "^(pnpm|yarn|bun)\\b", "expect": "absent" }
+    ]
+  },
+  "request": {
+    "requestId": "fixture-task-switch",
+    "host": "fixture",
+    "currentPrompt": "Continue with the orders pagination. Write the change to src/api/orders.ts and add a test for the second page.",
+    "chunks": [
+      {
+        "id": "c00-steering",
+        "ordinal": 0,
+        "kind": "steering",
+        "source": "CLAUDE.md",
+        "protected": true,
+        "content": "Use npm for every script. Run `npm run lint` and `npm test` before you call a change done. API handlers live in src/api/. Shared pagination helpers live in src/lib/pagination.ts; reuse them instead of writing new cursor code."
+      },
+      {
+        "id": "c01-user-navbar",
+        "ordinal": 1,
+        "kind": "user",
+        "source": "user",
+        "protected": false,
+        "content": "On screens narrower than 600px the navbar overlaps the page title. Can you fix that? Also, a standing rule for this week: database migrations are frozen, so do not change the schema or add migrations for anything you work on."
+      },
+      {
+        "id": "c02-assistant-navbar-start",
+        "ordinal": 2,
+        "kind": "assistant",
+        "source": "assistant",
+        "protected": false,
+        "content": "I'll start with the navbar component and its stylesheet."
+      },
+      {
+        "id": "c03-read-navbar-css",
+        "ordinal": 3,
+        "kind": "file",
+        "source": "src/components/Navbar.css",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/components/Navbar.css\nResult:\n1  .navbar {\n2    position: fixed;\n3    top: 0;\n4    width: 100%;\n5    height: 64px;\n6    z-index: 10;\n7  }\n8  .navbar__links { display: flex; gap: 24px; }\n9  @media (max-width: 600px) {\n10   .navbar__links { flex-direction: column; }\n11 }\n"
+      },
+      {
+        "id": "c04-read-navbar-tsx",
+        "ordinal": 4,
+        "kind": "file",
+        "source": "src/components/Navbar.tsx",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/components/Navbar.tsx\nResult:\n1  import './Navbar.css'\n2\n3  type Props = { links: Array<{ href: string; label: string }>; title?: string }\n4\n5  export function Navbar({ links, title }: Props) {\n6    return (\n7      <nav className=\"navbar\">\n8        <ul className=\"navbar__links\">\n9          {links.map((l) => <li key={l.href}><a href={l.href}>{l.label}</a></li>)}\n10       </ul>\n11     </nav>\n12   )\n13 }\n"
+      },
+      {
+        "id": "c05-build-error",
+        "ordinal": 5,
+        "kind": "tool-result",
+        "source": "Bash",
+        "protected": false,
+        "content": "Tool call: Bash\ncommand: npm run build\nResult (error):\nsrc/components/Navbar.tsx:5:33 - error TS6133: 'title' is declared but its value is never read.\nFound 1 error in src/components/Navbar.tsx:5"
+      },
+      {
+        "id": "c06-assistant-navbar-diagnosis",
+        "ordinal": 6,
+        "kind": "assistant",
+        "source": "assistant",
+        "protected": false,
+        "content": "The overlap comes from the fixed 64px navbar: under 600px the links stack into a column, so the bar grows taller than the padding on main. I'll make the height auto and pad main from a CSS variable."
+      },
+      {
+        "id": "c07-user-switch",
+        "ordinal": 7,
+        "kind": "user",
+        "source": "user",
+        "protected": false,
+        "content": "Leave the navbar; someone else picked it up. Instead, add cursor-based pagination to GET /api/orders. Old clients read `orders` and `total` from the response, so keep both fields working."
+      },
+      {
+        "id": "c08-read-orders",
+        "ordinal": 8,
+        "kind": "file",
+        "source": "src/api/orders.ts",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/api/orders.ts\nResult:\n1  import type { Request, Response } from 'express'\n2  import { db } from '../db/client'\n3\n4  export async function listOrders(req: Request, res: Response) {\n5    const customerId = String(req.query.customerId ?? '')\n6    const orders = await db.query(\n7      'SELECT id, customer_id, total_cents, created_at FROM orders WHERE customer_id = $1 ORDER BY created_at DESC',\n8      [customerId],\n9    )\n10   res.json({ orders: orders.rows, total: orders.rowCount })\n11 }\n"
+      },
+      {
+        "id": "c09-read-products",
+        "ordinal": 9,
+        "kind": "file",
+        "source": "src/api/products.ts",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/api/products.ts\nResult:\n1  import type { Request, Response } from 'express'\n2  import { db } from '../db/client'\n3  import { decodeCursor, encodeCursor, parseLimit } from '../lib/pagination'\n4\n5  export async function listProducts(req: Request, res: Response) {\n6    const limit = parseLimit(req.query.limit)\n7    const after = decodeCursor(req.query.cursor)\n8    const rows = await db.query(\n9      `SELECT id, name, price_cents, created_at FROM products\n10      WHERE ($1::timestamptz IS NULL OR (created_at, id) < ($1, $2))\n11      ORDER BY created_at DESC, id DESC LIMIT $3`,\n12     [after?.createdAt ?? null, after?.id ?? null, limit + 1],\n13   )\n14   const page = rows.rows.slice(0, limit)\n15   const last = page.at(-1)\n16   res.json({ products: page, nextCursor: rows.rows.length > limit && last ? encodeCursor(last) : null })\n17 }\n"
+      },
+      {
+        "id": "c10-read-pagination",
+        "ordinal": 10,
+        "kind": "file",
+        "source": "src/lib/pagination.ts",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: src/lib/pagination.ts\nResult:\n1  export type Cursor = { createdAt: string; id: string }\n2\n3  export function encodeCursor(row: { created_at: Date | string; id: string }): string {\n4    const createdAt = new Date(row.created_at).toISOString()\n5    return Buffer.from(JSON.stringify({ createdAt, id: row.id })).toString('base64url')\n6  }\n7\n8  export function decodeCursor(value: unknown): Cursor | undefined {\n9    if (typeof value !== 'string' || value === '') return undefined\n10   return JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Cursor\n11 }\n12\n13 export function parseLimit(value: unknown, fallback = 50, max = 200): number {\n14   const n = Number(value)\n15   return Number.isInteger(n) && n > 0 ? Math.min(n, max) : fallback\n16 }\n"
+      },
+      {
+        "id": "c11-grep-schema",
+        "ordinal": 11,
+        "kind": "tool-result",
+        "source": "Bash",
+        "protected": false,
+        "content": "Tool call: Bash\ncommand: grep -n -A6 \"CREATE TABLE orders\" db/schema.sql\nResult:\n12:CREATE TABLE orders (\n13-  id uuid PRIMARY KEY,\n14-  customer_id uuid NOT NULL REFERENCES customers(id),\n15-  total_cents integer NOT NULL,\n16-  created_at timestamptz NOT NULL DEFAULT now()\n17-);\n18-CREATE INDEX orders_customer_created_idx ON orders (customer_id, created_at DESC, id DESC);"
+      },
+      {
+        "id": "c12-read-orders-test",
+        "ordinal": 12,
+        "kind": "file",
+        "source": "test/api/orders.test.ts",
+        "protected": false,
+        "content": "Tool call: Read\nfile_path: test/api/orders.test.ts\nResult:\n1  import { listOrders } from '../../src/api/orders'\n2  import { mockReqRes, seedOrders } from '../helpers'\n3\n4  test('lists orders for a customer', async () => {\n5    await seedOrders('c1', 3)\n6    const { req, res } = mockReqRes({ query: { customerId: 'c1' } })\n7    await listOrders(req, res)\n8    expect(res.body.orders).toHaveLength(3)\n9    expect(res.body.total).toBe(3)\n10 })\n"
+      },
+      {
+        "id": "c13-assistant-plan",
+        "ordinal": 13,
+        "kind": "assistant",
+        "source": "assistant",
+        "protected": false,
+        "content": "Plan: reuse parseLimit, decodeCursor, and encodeCursor from src/lib/pagination.ts and page orders by (created_at, id) the way listProducts does, which the existing orders_customer_created_idx index already supports. Add nextCursor to the response. orders stays a page of rows; total must keep meaning all of the customer's orders, so I'll compute it with a separate COUNT query."
+      }
+    ]
+  }
+}

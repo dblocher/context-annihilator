@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "UserPromptExpansion": [
+      {
+        "matcher": "^(context-annihilator:)?annihilate$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${user_config.node_path}",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/annihilate-hook.mjs"],
+            "timeout": 300,
+            "onFailure": "block",
+            "statusMessage": "Context Annihilator: reducing context and starting a fresh session"
+          }
+        ]
+      }
+    ]
+  }
+}

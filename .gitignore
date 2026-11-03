@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.aws-sam/
+claude-plugin/dist/
+test/evaluation/runs/
+*.log
+.env
+.env.*

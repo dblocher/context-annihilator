@@ -1,0 +1,45 @@
+{
+  "name": "context-annihilator",
+  "version": "0.1.0",
+  "description": "/annihilate hands the current task to a fresh background session seeded with a reduced, relevance-filtered context. Personal experiment.",
+  "userConfig": {
+    "stack_name": {
+      "type": "string",
+      "title": "Stack name",
+      "description": "CloudFormation stack name of the deployed service. Function names are <stack>-ingress and <stack>-result.",
+      "default": "context-annihilator"
+    },
+    "aws_region": {
+      "type": "string",
+      "title": "AWS region",
+      "description": "Region of the deployed stack.",
+      "default": "us-east-1"
+    },
+    "aws_profile": {
+      "type": "string",
+      "title": "AWS profile",
+      "description": "Named AWS profile with lambda:InvokeFunction on the ingress and result functions. Empty uses the default credential chain.",
+      "default": ""
+    },
+    "node_path": {
+      "type": "string",
+      "title": "Node.js 22+ executable",
+      "description": "Executable that runs the hook. Use an absolute path if the node on PATH is older than 22.",
+      "default": "node"
+    },
+    "claude_path": {
+      "type": "string",
+      "title": "Claude Code executable",
+      "description": "Executable used to start the background session with claude --bg.",
+      "default": "claude"
+    },
+    "poll_timeout_seconds": {
+      "type": "number",
+      "title": "Service timeout (seconds)",
+      "description": "How long the hook waits for the service before giving up. The hook also stops waiting about 43 seconds before its 300 second timeout, to leave time to launch the new session.",
+      "default": 240,
+      "min": 30,
+      "max": 255
+    }
+  }
+}

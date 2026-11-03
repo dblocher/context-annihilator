@@ -1,0 +1,11 @@
+{
+  "note": "USD per million tokens, Standard tier, global cross-Region inference profiles called from us-east-1. Geographic (us.) and in-Region model IDs cost 10% more. Prices change; check the Bedrock pricing page before relying on these numbers.",
+  "source": "https://www.cloudforecast.io/blog/aws-bedrock-pricing/ (October 2026 table); confirm at https://aws.amazon.com/bedrock/pricing/",
+  "checkedOn": "2026-10-30",
+  "models": {
+    "global.anthropic.claude-sonnet-4-6": { "inputPerMTok": 3.0, "outputPerMTok": 15.0 },
+    "global.anthropic.claude-haiku-4-5-20251001-v1:0": { "inputPerMTok": 1.0, "outputPerMTok": 5.0 },
+    "us.anthropic.claude-sonnet-4-6": { "inputPerMTok": 3.3, "outputPerMTok": 16.5 },
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0": { "inputPerMTok": 1.1, "outputPerMTok": 5.5 }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "context-annihilator-local",
+  "owner": { "name": "dblocher" },
+  "plugins": [
+    {
+      "name": "context-annihilator",
+      "source": "./claude-plugin",
+      "description": "/annihilate: hand off to a fresh background session with a relevance-filtered context."
+    }
+  ]
+}
